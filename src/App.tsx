@@ -7,9 +7,11 @@ import GlobeView from './components/GlobeView';
 import ProjectionView from './components/ProjectionView';
 import Controls from './components/Controls';
 import InfoPanel from './components/InfoPanel';
+import TrackPanel from './components/TrackPanel';
 import { SkyEpoch } from './lib/astronomy';
 import { computeSky, isTargetVisible, type SkyModel } from './lib/computeSky';
-import { fovBoundary } from './lib/geoMath';
+import { computeTrack, type TrackResult, type TrackUiState } from './lib/track';
+import { angularSeparation, fovBoundary } from './lib/geoMath';
 import {
   buildExportJson,
   buildStandaloneSvg,
@@ -25,6 +27,14 @@ import type { Annotation, FovConfig, SavedFov, SiteState } from './types';
 const DEFAULT_SITE: SiteState = OBSERVING_SITES[0];
 const DEFAULT_TIME = '2026-09-30T13:00:00Z';
 const DEFAULT_FOV: FovConfig = { centerRa: 213.9, centerDec: 19.2, radiusDeg: 30 };
+const DEFAULT_TRACK_UI: TrackUiState = {
+  followSelection: false,
+  bodyId: 'Mars',
+  startIso: '2026-09-23T00:00:00Z',
+  endIso: '2026-10-14T00:00:00Z',
+  stepHours: 24,
+  show: true
+};
 
 function uuid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
@@ -43,6 +53,7 @@ export default function App() {
   const [focusToken, setFocusToken] = useState<{ id: string; nonce: number } | null>(null);
   const [savedFovs, setSavedFovs] = useState<SavedFov[]>([]);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [trackUi, setTrackUi] = useState<TrackUiState>(DEFAULT_TRACK_UI);
 
   // 初始载入 IndexedDB
   useEffect(() => {
@@ -70,6 +81,50 @@ export default function App() {
     () => (selectedId && sky ? sky.targets.find((t) => t.id === selectedId) ?? null : null),
     [selectedId, sky]
   );
+
+  // —— 单目标日期轨迹 ——
+  // 有效目标 id：跟随模式下取当前选中目标；恒星以 "star:" 前缀传给
+  // computeTrack，由其返回明确的拒绝信息（不在此处静默忽略）。
+  const effectiveBodyId = useMemo(() => {
+    if (!trackUi.followSelection) return trackUi.bodyId;
+    if (!selectedTarget) return null;
+    if (selectedTarget.kind === 'star') return `star:${selectedTarget.name}`;
+    return selectedTarget.id.replace(/^body-/, '');
+  }, [trackUi.followSelection, trackUi.bodyId, selectedTarget]);
+
+  // 轨迹采样：仅依赖目标/日期/步长/台站/视场，与"当前时刻"无关。
+  // 台站只影响各点的地平状态；天球位置为地心 J2000，同一 UTC 不随台站改变。
+  const trackResult: TrackResult | null = useMemo(() => {
+    if (effectiveBodyId === null) return null;
+    return computeTrack(
+      { bodyId: effectiveBodyId, startIso: trackUi.startIso, endIso: trackUi.endIso, stepHours: trackUi.stepHours },
+      site,
+      fov
+    );
+  }, [effectiveBodyId, trackUi.startIso, trackUi.endIso, trackUi.stepHours, site, fov]);
+
+  const track = trackResult?.ok ? trackResult.track : null;
+  const shownTrack = trackUi.show ? track : null;
+
+  // 三视图之一的球面视图工作在当前历元的地平直角坐标系：
+  // 轨迹（J2000 天球坐标）随经纬网一起转到该坐标系绘制。
+  const trackHorizontal = useMemo(() => {
+    if (!epoch || !shownTrack) return null;
+    return shownTrack.points.map((p) => {
+      const hz = epoch.equatorialToHorizontal(p.ra, p.dec);
+      return { x: hz.hx, y: hz.hy, z: hz.hz, label: p.dateLabel };
+    });
+  }, [epoch, shownTrack]);
+
+  // 把视场中心移到轨迹中段，并按采样点最大张角调整角半径
+  const aimFovAtTrack = () => {
+    if (!track || track.points.length === 0) return;
+    const mid = track.points[Math.floor(track.points.length / 2)];
+    let maxSep = 0;
+    for (const p of track.points) maxSep = Math.max(maxSep, angularSeparation(mid.ra, mid.dec, p.ra, p.dec));
+    const radiusDeg = Math.min(90, Math.max(3, Math.ceil(maxSep * 1.25 * 2) / 2));
+    setFov({ centerRa: mid.ra, centerDec: mid.dec, radiusDeg });
+  };
 
   // 点击任一视图：同步选中 + 三维视图聚焦
   const selectTarget = (id: string | null) => {
@@ -185,6 +240,10 @@ export default function App() {
             showGraticule={showGraticule}
             savedFovs={savedFovs}
             annotations={annotations}
+            trackUi={trackUi}
+            selectedTargetName={selectedTarget?.name ?? null}
+            selectedTargetIsStar={selectedTarget?.kind === 'star'}
+            onChangeTrackUi={(patch) => setTrackUi((u) => ({ ...u, ...patch }))}
             onChangeSite={setSite}
             onChangeTime={setTimeIso}
             onChangeFov={setFov}
@@ -218,6 +277,7 @@ export default function App() {
                   onHover={setHoverId}
                   focusToken={focusToken}
                   graticuleHorizontal={graticule}
+                  trackHorizontal={trackHorizontal}
                 />
               </section>
 
@@ -229,6 +289,7 @@ export default function App() {
                   horizonClip={horizonClip}
                   showHorizon={showHorizon}
                   annotations={annotations}
+                  track={shownTrack}
                   selectedId={selectedId}
                   hoverId={hoverId}
                   onSelect={selectTarget}
@@ -241,6 +302,7 @@ export default function App() {
                   horizonClip={horizonClip}
                   showHorizon={showHorizon}
                   annotations={annotations}
+                  track={shownTrack}
                   selectedId={selectedId}
                   hoverId={hoverId}
                   onSelect={selectTarget}
@@ -259,6 +321,8 @@ export default function App() {
           ) : (
             <div className="bad-time">时间格式无效，请检查 UTC 时间输入。</div>
           )}
+
+          <TrackPanel result={trackResult} onAimTrack={aimFovAtTrack} />
         </main>
       </div>
 

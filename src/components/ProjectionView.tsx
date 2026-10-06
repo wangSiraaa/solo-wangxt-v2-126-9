@@ -10,6 +10,7 @@
 
 import { useMemo } from 'react';
 import type { SkyModel, SkyTarget } from '../lib/computeSky';
+import type { TrackModel } from '../lib/track';
 import type { FovConfig, Annotation } from '../types';
 import {
   belowHorizonObject,
@@ -31,6 +32,8 @@ interface ProjectionViewProps {
   horizonClip: boolean;
   showHorizon: boolean;
   annotations: Annotation[];
+  /** 日期轨迹（J2000 地心采样点）；null 时不绘制 */
+  track: TrackModel | null;
   selectedId: string | null;
   hoverId: string | null;
   onSelect: (id: string | null) => void;
@@ -106,6 +109,28 @@ export default function ProjectionView(props: ProjectionViewProps) {
       .filter((x): x is { a: Annotation; x: number; y: number } => x !== null);
   }, [built, props.annotations]);
 
+  // 日期轨迹：GeoJSON LineString 交给 D3 的 rotate+clipAngle 球面裁剪——
+  // 赤经跨零点的轨迹在对跖子午线处被正确处理，不会横贯整图；
+  // geoPath 的重采样使相邻采样点之间沿大圆（球面短弧）走线。
+  const trackDraw = useMemo(() => {
+    const track = props.track;
+    if (!track || track.points.length < 2) return null;
+    const line = {
+      type: 'LineString',
+      coordinates: track.points.map((p) => [p.ra, p.dec] as [number, number])
+    };
+    const d = built.path(line);
+    const marks = track.points
+      .map((p, i) => {
+        const xy = projectPoint(built.projection, p.ra, p.dec);
+        return xy ? { i, x: xy[0], y: xy[1], label: p.dateLabel } : null;
+      })
+      .filter((x): x is { i: number; x: number; y: number; label: string } => x !== null);
+    // 日期标记稀疏化：最多约 10 个，始终含首末点
+    const stride = Math.max(1, Math.ceil(track.points.length / 10));
+    return { d, marks, stride, lastIndex: track.points.length - 1 };
+  }, [built, props.track]);
+
   const selected = props.selectedId ? sky.targets.find((t) => t.id === props.selectedId) : null;
 
   // 边缘比例尺读数（中心每度像素、边缘相对倍数）
@@ -154,6 +179,23 @@ export default function ProjectionView(props: ProjectionViewProps) {
 
           {/* 视场边界（球面小圆投影后的轮廓） */}
           <path d={paths.fovPath} fill="none" stroke="#57e389" strokeWidth={1.4} opacity={0.9} />
+
+          {/* 日期轨迹：离散采样点 + 球面短弧连线（仅示意，非精密星历） */}
+          {trackDraw && (
+            <g pointerEvents="none">
+              <path d={trackDraw.d} fill="none" stroke="#ffb74d" strokeWidth={1.6} opacity={0.9} />
+              {trackDraw.marks.map((m) => (
+                <circle key={m.i} cx={m.x} cy={m.y} r={2.4} fill="#ffb74d" stroke="#070a14" strokeWidth={0.6} />
+              ))}
+              {trackDraw.marks
+                .filter((m) => m.i % trackDraw.stride === 0 || m.i === trackDraw.lastIndex)
+                .map((m) => (
+                  <text key={`tl-${m.i}`} x={m.x + 4} y={m.y - 4} fill="#ffd9a0" fontSize={9} className="proj-label">
+                    {m.label}
+                  </text>
+                ))}
+            </g>
+          )}
 
           {/* 方位基点 */}
           {showHorizon &&
@@ -226,6 +268,7 @@ export default function ProjectionView(props: ProjectionViewProps) {
             ? `（立体投影边缘径向外放 ×${edgeRatio.toFixed(2)}，图上距离≠角距）`
             : '（等距方位：径向 r 与角距成正比，同心圆为等角距参考环）'}
         </span>
+        {trackDraw && <span>橙色弧＝{props.track!.targetName}日期轨迹（离散采样，点间短弧仅示意）</span>}
         {selected && (
           <span className="proj-foot-sel">
             {selected.name}：距视场中心 {selected.sepFromCenter.toFixed(2)}°（球面角距）· 高度 {selected.alt.toFixed(1)}°

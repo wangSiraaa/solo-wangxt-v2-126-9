@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { OBSERVING_SITES } from '../data/sites';
 import { DEMO_SCENARIOS } from '../data/scenarios';
+import { MAX_TRACK_POINTS, MAX_TRACK_SPAN_DAYS, MIN_TRACK_STEP_HOURS, TRACK_TARGETS, type TrackUiState } from '../lib/track';
 import type { FovConfig, SavedFov, Annotation, SiteState } from '../types';
 
 interface ControlsProps {
@@ -16,6 +17,11 @@ interface ControlsProps {
   showGraticule: boolean;
   savedFovs: SavedFov[];
   annotations: Annotation[];
+  trackUi: TrackUiState;
+  /** 当前选中目标名（用于轨迹跟随模式提示），无选中为 null */
+  selectedTargetName: string | null;
+  selectedTargetIsStar: boolean;
+  onChangeTrackUi: (patch: Partial<TrackUiState>) => void;
   onChangeSite: (site: SiteState) => void;
   onChangeTime: (iso: string) => void;
   onChangeFov: (fov: FovConfig) => void;
@@ -148,6 +154,74 @@ export default function Controls(p: ControlsProps) {
           <input type="checkbox" checked={p.showGraticule} onChange={(e) => p.onToggleGraticule(e.target.checked)} />
           显示 J2000 经纬网
         </label>
+      </section>
+
+      <section className="ctl-block">
+        <h3>日期轨迹（离散采样）</h3>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={p.trackUi.followSelection}
+            onChange={(e) => p.onChangeTrackUi({ followSelection: e.target.checked })}
+          />
+          跟随当前选中目标
+        </label>
+        {p.trackUi.followSelection ? (
+          <p className="hint">
+            {p.selectedTargetName
+              ? p.selectedTargetIsStar
+                ? `当前选中：${p.selectedTargetName}（恒星，不支持轨迹，将被明确拒绝）`
+                : `当前选中：${p.selectedTargetName}`
+              : '尚未选中目标：请在任一视图中点击一个太阳系天体。'}
+          </p>
+        ) : (
+          <label>
+            目标（仅太阳系天体）
+            <select value={p.trackUi.bodyId} onChange={(e) => p.onChangeTrackUi({ bodyId: e.target.value })}>
+              {TRACK_TARGETS.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label>
+          开始（UTC）
+          <input
+            type="datetime-local"
+            step={1}
+            value={p.trackUi.startIso.slice(0, 19)}
+            onChange={(e) => p.onChangeTrackUi({ startIso: e.target.value + 'Z' })}
+          />
+        </label>
+        <label>
+          结束（UTC）
+          <input
+            type="datetime-local"
+            step={1}
+            value={p.trackUi.endIso.slice(0, 19)}
+            onChange={(e) => p.onChangeTrackUi({ endIso: e.target.value + 'Z' })}
+          />
+        </label>
+        <label>
+          步长（小时，≥{MIN_TRACK_STEP_HOURS}）
+          <input
+            type="number"
+            min={MIN_TRACK_STEP_HOURS}
+            step={1}
+            value={p.trackUi.stepHours}
+            onChange={(e) => p.onChangeTrackUi({ stepHours: Number(e.target.value) })}
+          />
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={p.trackUi.show} onChange={(e) => p.onChangeTrackUi({ show: e.target.checked })} />
+          在三个视图中显示轨迹与日期标记
+        </label>
+        <p className="hint">
+          上限：跨度 ≤ {MAX_TRACK_SPAN_DAYS} 天、采样 ≤ {MAX_TRACK_POINTS} 点；超限或不支持的目标会被明确拒绝。
+          轨迹位置为地心 J2000 视位置，切换台站只改变地平状态。
+        </p>
       </section>
 
       <section className="ctl-block">

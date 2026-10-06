@@ -30,6 +30,7 @@ npm run preview    # 本地预览构建产物
 | 星等筛选与地平线裁切独立 | 两个独立开关；星等只作用于恒星，日月行星始终作为动态参考；地平以下恒星在关闭裁切时半透明显示 |
 | 极区 / 跨零 / 近地平星表样例 | "演示场景"三个一键预设；`data/catalog.ts` 星表带 `polar` / `zero-cross` / `bright` 标签 |
 | 两视图点击定位同一目标 | 任一视图点击 → 全局选中；三维视图飞行转向，两张投影图同步金色高亮 |
+| 单目标日期轨迹 | `lib/track.ts`：有限日期区间（≤400 天、≤400 点、步长 ≥1 h）按固定 UTC 步长采样；位置用地心 J2000 视位置（`GeoVector`+`EquatorFromVector`，**与台站无关**），切换台站只改变各点地平高度/方位；三视图绘制带日期标记的球面短弧（投影图由 D3 球面裁剪，跨赤经零点不横贯；球面视图 slerp 细分），面板列出各点地平高度与视场内判定；恒星等不支持的目标与超限参数被明确拒绝 |
 | 导出注明坐标系与时间基准 | SVG / PNG / JSON 三种导出；图注写明 J2000.0 平赤道坐标系、UTC 时间、JD(TT)、GMST、台站经纬度、星等与裁切设置、投影变形说明 |
 
 ## 内置演示场景
@@ -52,14 +53,16 @@ src/
   lib/geoMath.ts       球面距离、大圆弧终点、视场边界、坐标格式化
   lib/astronomy.ts     astronomy-engine 唯一封装层（坐标转换/日月行星/恒星时）
   lib/computeSky.ts    合并目标、逐条转换、三条独立筛选
+  lib/track.ts         单目标日期轨迹：UTC 步长采样、参数校验与明确拒绝
   lib/projections.ts   D3 两种投影构建、球面裁剪与比例尺标定
   lib/exporter.ts      独立 SVG / PNG / JSON 导出（含完整图注）
   lib/db.ts            IndexedDB Promise 封装
-  components/          GlobeView / ProjectionView / Controls / InfoPanel
+  components/          GlobeView / ProjectionView / Controls / InfoPanel / TrackPanel
 ```
 
 ## 图例
 
 - 圆形＝恒星，方形＝行星，菱形＝太阳/月球；金色环＝选中，蓝色环＝悬停
 - 绿色圆＝视场边界（球面小圆），蓝色虚线环＝等角距参考环
+- 橙色短弧＋日期标记＝单目标日期轨迹（离散采样，点间短弧仅示意，非精密星历）
 - 红色线＝地平圈，红色半透明区＝地平以下半球；N/E/S/W 为方位基点

@@ -25,9 +25,23 @@ interface GlobeViewProps {
   focusToken: { id: string; nonce: number } | null;
   /** J2000 经纬网在本地地平直角坐标中的采样 */
   graticuleHorizontal?: { parallels: number[][][]; meridians: number[][][] };
+  /** 日期轨迹采样点：J2000 位置经当前历元转到本地地平直角坐标（含日期标记文本） */
+  trackHorizontal?: Array<{ x: number; y: number; z: number; label: string }> | null;
 }
 
 const SPHERE_R = 1;
+
+/** 单位向量球面线性插值：轨迹相邻采样点之间的短弧细分 */
+function slerpUnit(a: THREE.Vector3, b: THREE.Vector3, t: number): THREE.Vector3 {
+  const dot = THREE.MathUtils.clamp(a.dot(b), -1, 1);
+  const theta = Math.acos(dot);
+  if (theta < 1e-5) return a.clone();
+  const s = Math.sin(theta);
+  return a
+    .clone()
+    .multiplyScalar(Math.sin((1 - t) * theta) / s)
+    .add(b.clone().multiplyScalar(Math.sin(t * theta) / s));
+}
 
 function starColor(t: SkyTarget): THREE.Color {
   if (t.kind === 'sun') return new THREE.Color(0xffd27d);
@@ -89,6 +103,7 @@ export default function GlobeView(props: GlobeViewProps) {
         拖拽旋转 · 滚轮缩放 · 点击星点定位（与右侧两图联动）
         <br />
         地平坐标系：红圈=地平（N/E/S/W），绿圈=视场（角半径 {fov.radiusDeg.toFixed(1)}°），网格=J2000 赤道坐标
+        {props.trackHorizontal ? ' · 橙弧=日期轨迹（离散采样）' : ''}
         {horizonClip ? ' · 已开启地平线裁切' : ''}
       </div>
     </div>
@@ -121,6 +136,7 @@ class GlobeScene {
   private highlight: THREE.Mesh;
   private labelsGroup = new THREE.Group();
   private annotationsGroup = new THREE.Group();
+  private trackGroup = new THREE.Group();
   private raycaster = new THREE.Raycaster();
   private pickSphere: THREE.Mesh;
   private drag: DragState = { active: false, x: 0, y: 0, moved: 0 };
@@ -164,6 +180,7 @@ class GlobeScene {
     this.scene.add(this.graticuleGroup);
     this.scene.add(this.labelsGroup);
     this.scene.add(this.annotationsGroup);
+    this.scene.add(this.trackGroup);
 
     this.initStars();
     this.initStaticFrames();
@@ -452,6 +469,9 @@ class GlobeScene {
     // 批注
     this.rebuildAnnotations(props);
 
+    // 日期轨迹（J2000 采样点已转到当前历元的地平直角坐标）
+    this.rebuildTrack(props);
+
     // 高亮
     const sel = props.selectedId ? props.sky.targets.find((t) => t.id === props.selectedId) : null;
     if (sel) {
@@ -557,6 +577,55 @@ class GlobeScene {
       if (!t) continue;
       const sp = this.makeTextSprite(`📝 ${a.text}`, new THREE.Vector3(t.hx, t.hy, t.hz), a.color);
       this.annotationsGroup.add(sp);
+    }
+  }
+
+  /**
+   * 日期轨迹：相邻采样点用 slerp 细分成球面短弧（单位向量表示，
+   * 赤经跨零点不会出现横贯图面的连线）；采样点画小点，日期标记稀疏显示。
+   */
+  private rebuildTrack(props: GlobeViewProps) {
+    [...this.trackGroup.children].forEach((c) => {
+      const o = c as THREE.Line | THREE.Points | THREE.Sprite;
+      o.geometry?.dispose?.();
+      const mat = (o as THREE.Sprite).material as THREE.SpriteMaterial | THREE.Material | undefined;
+      (mat as THREE.SpriteMaterial)?.map?.dispose?.();
+      mat?.dispose?.();
+    });
+    this.trackGroup.clear();
+
+    const pts = props.trackHorizontal;
+    if (!pts || pts.length < 2) return;
+
+    const vecs = pts.map((p) => new THREE.Vector3(p.x, p.y, p.z).normalize());
+
+    // 球面短弧连线
+    const SUB = 8;
+    const linePts: THREE.Vector3[] = [];
+    for (let i = 0; i < vecs.length - 1; i++) {
+      for (let k = 0; k < SUB; k++) {
+        linePts.push(slerpUnit(vecs[i], vecs[i + 1], k / SUB).multiplyScalar(SPHERE_R * 1.004));
+      }
+    }
+    linePts.push(vecs[vecs.length - 1].clone().multiplyScalar(SPHERE_R * 1.004));
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(linePts),
+      new THREE.LineBasicMaterial({ color: 0xffb74d })
+    );
+    this.trackGroup.add(line);
+
+    // 采样点
+    const dots = new THREE.Points(
+      new THREE.BufferGeometry().setFromPoints(vecs.map((v) => v.clone().multiplyScalar(SPHERE_R * 1.006))),
+      new THREE.PointsMaterial({ color: 0xffb74d, size: 4, sizeAttenuation: false, depthTest: false })
+    );
+    this.trackGroup.add(dots);
+
+    // 日期标记（稀疏，最多约 6 个，含末点）
+    const stride = Math.max(1, Math.ceil(pts.length / 6));
+    for (let i = 0; i < pts.length; i++) {
+      if (i % stride !== 0 && i !== pts.length - 1) continue;
+      this.trackGroup.add(this.makeTextSprite(pts[i].label, vecs[i], '#ffd9a0'));
     }
   }
 
