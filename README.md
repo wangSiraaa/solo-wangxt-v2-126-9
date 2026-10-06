@@ -21,7 +21,7 @@ npm run preview    # 本地预览构建产物
 | React + TypeScript 管理坐标 | `src/App.tsx` 与 `src/components/*` |
 | Three.js 显示天球 | `GlobeView.tsx`：本地地平直角坐标（x 北 / y 西 / z 天顶），相机在球心内向外看 |
 | D3 geo 绘制投影 | `ProjectionView.tsx` + `lib/projections.ts`：`geoStereographic` / `geoAzimuthalEquidistant` |
-| astronomy-engine 做明确支持的转换 | `lib/astronomy.ts`：`Rotation_EQJ_HOR`（J2000 平赤道→本地地平）、`Equator(..., ofdate=false, aberration=true)` 取日月行星 J2000 视位置、`Illumination` 取星等、`SiderealTime` 取恒星时；**不自行实现岁差章动**，不使用大气折射改正 |
+| astronomy-engine 做明确支持的转换 | `lib/astronomy.ts`：`Rotation_EQJ_HOR`（J2000 平赤道→本地地平）、`GeoVector + EquatorFromVector` 取日月行星地心 J2000 视位置、`Illumination` 取星等、`SiderealTime` 取恒星时；**不自行实现岁差章动**，不使用大气折射改正 |
 | IndexedDB 存视场与批注 | `lib/db.ts`：`fovs` / `annotations` 两个对象库；批注锚定 J2000 天球坐标而非像素 |
 | 赤经跨零点不横贯整图 | 投影统一 `rotate([-ra0,-dec0]) + clipAngle(fovRadius)` 做**球面裁剪**，D3 在对跖子午线自动切断；视场边界由大圆弧逐点采样（`geoMath.fovBoundary`） |
 | 角距离按球面计算 | `angularSeparation()` 使用 haversine，经度差归算到 (-180,180]；FOV 判定、信息面板均用真实角距 |
@@ -30,6 +30,8 @@ npm run preview    # 本地预览构建产物
 | 星等筛选与地平线裁切独立 | 两个独立开关；星等只作用于恒星，日月行星始终作为动态参考；地平以下恒星在关闭裁切时半透明显示 |
 | 极区 / 跨零 / 近地平星表样例 | "演示场景"三个一键预设；`data/catalog.ts` 星表带 `polar` / `zero-cross` / `bright` 标签 |
 | 两视图点击定位同一目标 | 任一视图点击 → 全局选中；三维视图飞行转向，两张投影图同步金色高亮 |
+| 单目标日期轨迹 | `lib/trajectory.ts`：太阳/月球/水星至土星在有限 UTC 区间按 1/3/6/12/24 h 固定步长离散采样；位置用 astronomy-engine `GeoVector + EquatorFromVector` 取**地心 J2000 视位置**，三视图绘制相邻采样点之间的球面短弧，并列出各采样点在该 UTC、当前台站的地平高度与当前视场判定 |
+| 轨迹边界与说明 | 最长 31 天、121 个采样点；结束 UTC 必须是步长整数倍；不支持地球/SSB/EMB/未定义 Star。短线只连接离散采样点，不把线段间路径或可见性解释为精密星历；切换台站只改变地平状态，不改变同一 UTC 的天球 RA/Dec |
 | 导出注明坐标系与时间基准 | SVG / PNG / JSON 三种导出；图注写明 J2000.0 平赤道坐标系、UTC 时间、JD(TT)、GMST、台站经纬度、星等与裁切设置、投影变形说明 |
 
 ## 内置演示场景
@@ -51,6 +53,7 @@ src/
   data/scenarios.ts    三个演示场景
   lib/geoMath.ts       球面距离、大圆弧终点、视场边界、坐标格式化
   lib/astronomy.ts     astronomy-engine 唯一封装层（坐标转换/日月行星/恒星时）
+  lib/trajectory.ts    单目标 UTC 离散日期轨迹、参数校验与台站/视场状态
   lib/computeSky.ts    合并目标、逐条转换、三条独立筛选
   lib/projections.ts   D3 两种投影构建、球面裁剪与比例尺标定
   lib/exporter.ts      独立 SVG / PNG / JSON 导出（含完整图注）
@@ -63,3 +66,4 @@ src/
 - 圆形＝恒星，方形＝行星，菱形＝太阳/月球；金色环＝选中，蓝色环＝悬停
 - 绿色圆＝视场边界（球面小圆），蓝色虚线环＝等角距参考环
 - 红色线＝地平圈，红色半透明区＝地平以下半球；N/E/S/W 为方位基点
+- 橙色线/点＝单目标日期轨迹的相邻离散采样短弧与采样点；它不是连续精密星历

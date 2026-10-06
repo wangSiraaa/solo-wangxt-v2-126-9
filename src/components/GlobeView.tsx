@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { SkyModel, SkyTarget } from '../lib/computeSky';
+import type { TrajectoryViewModel } from '../lib/trajectory';
 import type { FovConfig, Annotation } from '../types';
 import { DEG } from '../lib/geoMath';
 
@@ -25,6 +26,8 @@ interface GlobeViewProps {
   focusToken: { id: string; nonce: number } | null;
   /** J2000 经纬网在本地地平直角坐标中的采样 */
   graticuleHorizontal?: { parallels: number[][][]; meridians: number[][][] };
+  /** 可选单目标日期轨迹（已转换为当前 epoch 的地平向量） */
+  trajectory: TrajectoryViewModel | null;
 }
 
 const SPHERE_R = 1;
@@ -89,6 +92,7 @@ export default function GlobeView(props: GlobeViewProps) {
         拖拽旋转 · 滚轮缩放 · 点击星点定位（与右侧两图联动）
         <br />
         地平坐标系：红圈=地平（N/E/S/W），绿圈=视场（角半径 {fov.radiusDeg.toFixed(1)}°），网格=J2000 赤道坐标
+        {props.trajectory ? ' · 橙线=日期轨迹采样短弧（非连续星历）' : ''}
         {horizonClip ? ' · 已开启地平线裁切' : ''}
       </div>
     </div>
@@ -121,6 +125,7 @@ class GlobeScene {
   private highlight: THREE.Mesh;
   private labelsGroup = new THREE.Group();
   private annotationsGroup = new THREE.Group();
+  private trajectoryGroup = new THREE.Group();
   private raycaster = new THREE.Raycaster();
   private pickSphere: THREE.Mesh;
   private drag: DragState = { active: false, x: 0, y: 0, moved: 0 };
@@ -164,6 +169,7 @@ class GlobeScene {
     this.scene.add(this.graticuleGroup);
     this.scene.add(this.labelsGroup);
     this.scene.add(this.annotationsGroup);
+    this.scene.add(this.trajectoryGroup);
 
     this.initStars();
     this.initStaticFrames();
@@ -452,6 +458,9 @@ class GlobeScene {
     // 批注
     this.rebuildAnnotations(props);
 
+    // 单目标日期轨迹
+    this.rebuildTrajectory(props);
+
     // 高亮
     const sel = props.selectedId ? props.sky.targets.find((t) => t.id === props.selectedId) : null;
     if (sel) {
@@ -557,6 +566,67 @@ class GlobeScene {
       if (!t) continue;
       const sp = this.makeTextSprite(`📝 ${a.text}`, new THREE.Vector3(t.hx, t.hy, t.hz), a.color);
       this.annotationsGroup.add(sp);
+    }
+  }
+
+  private rebuildTrajectory(props: GlobeViewProps) {
+    [...this.trajectoryGroup.children].forEach((child) => {
+      if (child instanceof THREE.Sprite) child.material.map?.dispose();
+      const obj = child as THREE.Object3D & { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
+      obj.geometry?.dispose?.();
+      const mat = obj.material;
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+      else mat?.dispose?.();
+    });
+    this.trajectoryGroup.clear();
+    const tr = props.trajectory;
+    if (!tr) return;
+
+    // 相邻采样点之间的短弧在 buildTrajectoryViewModel 中已按 J2000 大圆弧细分，
+    // 再转到当前本地地平。每段独立使用 THREE.Line，避免首尾闭合或跨零误连。
+    for (const arc of tr.globeArcs) {
+      const pts = arc.map(([x, y, z]) => new THREE.Vector3(x, y, z).multiplyScalar(SPHERE_R * 1.004));
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({ color: 0xff9f43, transparent: true, opacity: 0.95 })
+      );
+      this.trajectoryGroup.add(line);
+    }
+
+    const pointPositions: number[] = [];
+    const pointColors: number[] = [];
+    const labelSamples = tr.samples.filter((s) => s.showDateLabel);
+    for (const s of tr.samples) {
+      const v = new THREE.Vector3(s.globeHx, s.globeHy, s.globeHz).multiplyScalar(SPHERE_R * 1.008);
+      pointPositions.push(v.x, v.y, v.z);
+      const color = new THREE.Color(s.inFov ? 0xffd35a : 0xff9f43);
+      pointColors.push(color.r, color.g, color.b);
+    }
+    const pointGeom = new THREE.BufferGeometry();
+    pointGeom.setAttribute('position', new THREE.Float32BufferAttribute(pointPositions, 3));
+    pointGeom.setAttribute('color', new THREE.Float32BufferAttribute(pointColors, 3));
+    const points = new THREE.Points(
+      pointGeom,
+      new THREE.PointsMaterial({
+        size: 7,
+        sizeAttenuation: false,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false
+      })
+    );
+    this.trajectoryGroup.add(points);
+
+    // 日期标签只标注首尾和 UTC 00:00 采样点，避免长时间轨迹铺满文字。
+    for (const s of labelSamples) {
+      if (!s.showDateLabel) continue;
+      const sprite = this.makeTextSprite(
+        s.dateLabel,
+        new THREE.Vector3(s.globeHx, s.globeHy, s.globeHz).multiplyScalar(1.03),
+        '#ffc37a'
+      );
+      this.trajectoryGroup.add(sprite);
     }
   }
 

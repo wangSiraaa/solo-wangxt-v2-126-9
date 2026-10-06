@@ -6,14 +6,15 @@
 //   - Rotation_EQJ_HOR(time, observer) 把 J2000 平赤道直角坐标转到
 //     本地地平直角坐标：x=北、y=西、z=天顶。
 //   - HorizonFromVector(vec, null) 返回 lon=方位角(北=0,顺时针向东)、lat=高度角。
-//   - 太阳/月球/行星用 Equator(body, date, observer, ofdate=false, aberration=true)
-//     取 J2000 坐标（内部为 GeoVector+自行光行差改正），星等用 Illumination。
+//   - 太阳/月球/行星用 GeoVector(body, ..., aberration=true) +
+//     EquatorFromVector 取地心 J2000 视位置，避免台站视差使切换地点时 RA/Dec 改变。
 //   - 不使用大气折射改正（科普星图保持几何一致）。
 
 import {
   AstroTime,
   Body,
-  Equator,
+  EquatorFromVector,
+  GeoVector,
   HorizonFromVector,
   Illumination,
   Observer,
@@ -52,6 +53,28 @@ export interface SolarSystemBodyInfo {
   phaseFraction?: number;
 }
 
+export interface BodyJ2000Position {
+  /** J2000 平赤经（度，[0,360)） */
+  ra: number;
+  /** J2000 平赤纬（度，[-90,90]） */
+  dec: number;
+}
+
+/** 本应用提供日期轨迹的太阳系目标：不含地球、SSB/EMB 与未定义的 Star1..Star8。 */
+export const TRACKABLE_BODIES: ReadonlyArray<{ body: Body; name: string }> = [
+  { body: Body.Sun, name: '太阳' },
+  { body: Body.Moon, name: '月球' },
+  { body: Body.Mercury, name: '水星' },
+  { body: Body.Venus, name: '金星' },
+  { body: Body.Mars, name: '火星' },
+  { body: Body.Jupiter, name: '木星' },
+  { body: Body.Saturn, name: '土星' }
+];
+
+export function isTrackableBody(body: Body): boolean {
+  return TRACKABLE_BODIES.some((item) => item.body === body);
+}
+
 /** 3x3 矩阵转置（旋转矩阵的逆等于转置） */
 function transpose(m: RotationMatrix): RotationMatrix {
   const r = m.rot;
@@ -73,6 +96,20 @@ export class SkyEpoch {
     this.observer = new Observer(site.latitude, site.longitude, site.height);
     this.rEqjToHor = Rotation_EQJ_HOR(this.time, this.observer);
     this.rHorToEqj = transpose(this.rEqjToHor);
+  }
+
+  /**
+   * 太阳系天体在给定 UTC 的地心 J2000 视位置（含光行差）。
+   * 故意不使用台站位置，保证同一 UTC 切换台站时天球 RA/Dec 完全一致；
+   * 地平高度再由各台站的 SkyEpoch 分别计算。
+   */
+  static geocentricBodyJ2000(body: Body, date: Date): BodyJ2000Position {
+    if (!isTrackableBody(body)) {
+      throw new Error(`不支持的日期轨迹目标：${body}`);
+    }
+    const v = GeoVector(body, new AstroTime(date), true);
+    const eq = EquatorFromVector(v);
+    return { ra: ((eq.ra * 15) % 360 + 360) % 360, dec: eq.dec };
   }
 
   /** 儒略日（力学时 TT）。AstroTime.tt 是自 J2000.0 起算的天数。 */
@@ -172,23 +209,14 @@ export class SkyEpoch {
    * 这是 astronomy-engine 明确支持的转换；自行发光星表不包含这些天体。
    */
   solarSystemBodies(): SolarSystemBodyInfo[] {
-    const list: Array<{ body: Body; name: string }> = [
-      { body: Body.Sun, name: '太阳' },
-      { body: Body.Moon, name: '月球' },
-      { body: Body.Mercury, name: '水星' },
-      { body: Body.Venus, name: '金星' },
-      { body: Body.Mars, name: '火星' },
-      { body: Body.Jupiter, name: '木星' },
-      { body: Body.Saturn, name: '土星' }
-    ];
-    return list.map(({ body, name }) => {
-      const eq = Equator(body, this.time, this.observer, false, true);
+    return TRACKABLE_BODIES.map(({ body, name }) => {
+      const pos = SkyEpoch.geocentricBodyJ2000(body, this.time.date);
       const illum = Illumination(body, this.time);
       return {
         body,
         name,
-        ra: eq.ra * 15,
-        dec: eq.dec,
+        ra: pos.ra,
+        dec: pos.dec,
         mag: illum.mag,
         phaseFraction: body === Body.Moon ? illum.phase_fraction : undefined
       };

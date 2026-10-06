@@ -3,11 +3,20 @@
 // astronomy-engine 完成其明确支持的坐标转换，IndexedDB 本地存视场与批注。
 
 import { useEffect, useMemo, useState } from 'react';
+import { Body } from 'astronomy-engine';
 import GlobeView from './components/GlobeView';
 import ProjectionView from './components/ProjectionView';
 import Controls from './components/Controls';
 import InfoPanel from './components/InfoPanel';
+import TrajectoryPanel from './components/TrajectoryPanel';
 import { SkyEpoch } from './lib/astronomy';
+import {
+  buildTrajectoryViewModel,
+  computeTrajectory,
+  type TrajectoryModel,
+  type TrajectoryRequest,
+  type TrajectoryViewModel
+} from './lib/trajectory';
 import { computeSky, isTargetVisible, type SkyModel } from './lib/computeSky';
 import { fovBoundary } from './lib/geoMath';
 import {
@@ -25,6 +34,13 @@ import type { Annotation, FovConfig, SavedFov, SiteState } from './types';
 const DEFAULT_SITE: SiteState = OBSERVING_SITES[0];
 const DEFAULT_TIME = '2026-09-30T13:00:00Z';
 const DEFAULT_FOV: FovConfig = { centerRa: 213.9, centerDec: 19.2, radiusDeg: 30 };
+const DEFAULT_TRAJECTORY_DRAFT: TrajectoryRequest = {
+  body: Body.Mars,
+  targetName: '火星',
+  startUtcIso: '2026-09-28T00:00:00Z',
+  endUtcIso: '2026-10-03T00:00:00Z',
+  stepHours: 24
+};
 
 function uuid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
@@ -43,6 +59,9 @@ export default function App() {
   const [focusToken, setFocusToken] = useState<{ id: string; nonce: number } | null>(null);
   const [savedFovs, setSavedFovs] = useState<SavedFov[]>([]);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [trajectoryDraft, setTrajectoryDraft] = useState<TrajectoryRequest>(DEFAULT_TRAJECTORY_DRAFT);
+  const [trajectoryModel, setTrajectoryModel] = useState<TrajectoryModel | null>(null);
+  const [trajectoryError, setTrajectoryError] = useState<string | null>(null);
 
   // 初始载入 IndexedDB
   useEffect(() => {
@@ -65,6 +84,11 @@ export default function App() {
   }, [epoch, fov, magLimit, horizonClip, boundaryPts]);
 
   const graticule = useMemo(() => epoch?.graticuleHorizontal(), [epoch]);
+
+  const trajectoryView: TrajectoryViewModel | null = useMemo(() => {
+    if (!epoch || !trajectoryModel) return null;
+    return buildTrajectoryViewModel(trajectoryModel, site, fov, epoch);
+  }, [epoch, trajectoryModel, site, fov]);
 
   const selectedTarget = useMemo(
     () => (selectedId && sky ? sky.targets.find((t) => t.id === selectedId) ?? null : null),
@@ -90,6 +114,27 @@ export default function App() {
       setSelectedId(s.suggestSelectId);
       setFocusToken({ id: s.suggestSelectId, nonce: Date.now() });
     }
+  };
+
+  const generateTrajectory = () => {
+    try {
+      const model = computeTrajectory(trajectoryDraft);
+      setTrajectoryModel(model);
+      setTrajectoryError(null);
+    } catch (e) {
+      setTrajectoryModel(null);
+      setTrajectoryError(e instanceof Error ? e.message : '轨迹参数无效。');
+    }
+  };
+
+  const clearTrajectory = () => {
+    setTrajectoryModel(null);
+    setTrajectoryError(null);
+  };
+
+  const centerTrajectoryStart = () => {
+    const first = trajectoryModel?.samples[0];
+    if (first) setFov((cur) => ({ ...cur, centerRa: first.ra, centerDec: first.dec }));
   };
 
   // 视场存取
@@ -198,6 +243,15 @@ export default function App() {
             onDeleteFov={removeFov}
             onAddAnnotation={addAnnotation}
             onDeleteAnnotation={removeAnnotation}
+            trajectoryDraft={trajectoryDraft}
+            trajectoryError={trajectoryError}
+            hasTrajectory={!!trajectoryModel}
+            onChangeTrajectoryDraft={(draft) => {
+              setTrajectoryDraft(draft);
+              setTrajectoryError(null);
+            }}
+            onGenerateTrajectory={generateTrajectory}
+            onClearTrajectory={clearTrajectory}
           />
         </aside>
 
@@ -218,6 +272,7 @@ export default function App() {
                   onHover={setHoverId}
                   focusToken={focusToken}
                   graticuleHorizontal={graticule}
+                  trajectory={trajectoryView}
                 />
               </section>
 
@@ -233,6 +288,7 @@ export default function App() {
                   hoverId={hoverId}
                   onSelect={selectTarget}
                   onHover={setHoverId}
+                  trajectory={trajectoryView}
                 />
                 <ProjectionView
                   kind="equidistant"
@@ -245,6 +301,7 @@ export default function App() {
                   hoverId={hoverId}
                   onSelect={selectTarget}
                   onHover={setHoverId}
+                  trajectory={trajectoryView}
                 />
               </section>
 
@@ -255,6 +312,10 @@ export default function App() {
                 gmstHours={sky.gmstHours}
                 julianDay={sky.julianDay}
               />
+
+              {trajectoryView && (
+                <TrajectoryPanel view={trajectoryView} onCenterStart={centerTrajectoryStart} />
+              )}
             </>
           ) : (
             <div className="bad-time">时间格式无效，请检查 UTC 时间输入。</div>
@@ -265,6 +326,7 @@ export default function App() {
       <footer className="app-footer">
         纯前端本地应用，无后端、无网络请求 · 星表 J2000.0 近似坐标 · 地平坐标转换 astronomy-engine（Rotation_EQJ_HOR，无大气折射）·
         角距一律按球面 haversine 计算，图上像素距离不代表实际角距
+        {trajectoryView ? ' · 日期轨迹为固定 UTC 步长离散采样，短线不是连续精密星历' : ''}
       </footer>
     </div>
   );

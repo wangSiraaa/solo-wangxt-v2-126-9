@@ -10,6 +10,7 @@
 
 import { useMemo } from 'react';
 import type { SkyModel, SkyTarget } from '../lib/computeSky';
+import type { TrajectoryViewModel, TrajectoryViewSample } from '../lib/trajectory';
 import type { FovConfig, Annotation } from '../types';
 import {
   belowHorizonObject,
@@ -35,6 +36,7 @@ interface ProjectionViewProps {
   hoverId: string | null;
   onSelect: (id: string | null) => void;
   onHover: (id: string | null) => void;
+  trajectory: TrajectoryViewModel | null;
 }
 
 const C = VIEW_SIZE / 2;
@@ -76,6 +78,34 @@ export default function ProjectionView(props: ProjectionViewProps) {
     }
     return out;
   }, [built, sky.targets, horizonClip]);
+
+  // 日期轨迹：D3 将相邻采样点按球面大圆弧插值，并由 clipAngle 做球面裁剪。
+  // 跨赤经零点的相邻点会在对跖子午线切断，不会连成横贯整图的直线。
+  const trajectoryDraw = useMemo(() => {
+    if (!props.trajectory) return null;
+    const { model, samples } = props.trajectory;
+    const arcObject = {
+      type: 'MultiLineString' as const,
+      coordinates: model.samples.slice(0, -1).map((a, i) => {
+        const b = model.samples[i + 1];
+        return [
+          [a.ra, a.dec],
+          [b.ra, b.dec]
+        ];
+      })
+    };
+    const points = samples
+      .map((s) => {
+        const p = projectPoint(built.projection, s.ra, s.dec);
+        return p ? { s, x: p[0], y: p[1] } : null;
+      })
+      .filter((x): x is { s: TrajectoryViewSample; x: number; y: number } => x !== null);
+    return {
+      arcPath: built.path(arcObject),
+      points,
+      labels: points.filter(({ s }) => s.showDateLabel)
+    };
+  }, [built, props.trajectory]);
 
   // 标签（亮星、太阳系天体、选中/悬停目标）
   const labels = useMemo(() => {
@@ -200,6 +230,38 @@ export default function ProjectionView(props: ProjectionViewProps) {
               {t.name}
             </text>
           ))}
+
+          {/* 单目标日期轨迹：只画相邻离散点之间的球面短弧和采样点 */}
+          {trajectoryDraw && (
+            <g className="trajectory-layer">
+              <path d={trajectoryDraw.arcPath} fill="none" stroke="#ff9f43" strokeWidth={2} strokeLinecap="round" opacity={0.95} />
+              {trajectoryDraw.points.map(({ s, x, y }) => (
+                <circle
+                  key={`tr-${s.timeUtcIso}`}
+                  cx={x}
+                  cy={y}
+                  r={3.4}
+                  fill="#ff9f43"
+                  stroke="#fff1d6"
+                  strokeWidth={0.8}
+                >
+                  <title>{`${s.dateLabel} UTC · h=${s.altAtSample.toFixed(1)}° · ${s.inFov ? '视场内' : '视场外'}`}</title>
+                </circle>
+              ))}
+              {trajectoryDraw.labels.map(({ s, x, y }) => (
+                <text
+                  key={`trl-${s.timeUtcIso}`}
+                  x={x + 6}
+                  y={y - 6}
+                  fill="#ffc37a"
+                  fontSize={9.5}
+                  className="proj-label trajectory-date-label"
+                >
+                  {s.dateLabel}
+                </text>
+              ))}
+            </g>
+          )}
 
           {/* 批注 */}
           {annoMarks.map(({ a, x, y }) => (

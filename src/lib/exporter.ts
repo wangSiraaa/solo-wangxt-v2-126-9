@@ -131,7 +131,7 @@ ${annoEls}
 <text x="0" y="0">时间基准：${fmtTime(meta.timeUtcIso)}（UTC）；儒略日 JD = ${meta.julianDay.toFixed(5)}（力学时 TT）；格林威治视恒星时 ${meta.gmstHours.toFixed(4)} h</text>
 <text x="0" y="18">观测位置：${esc(meta.site.name)}（纬度 ${meta.site.latitude.toFixed(4)}°，经度 ${meta.site.longitude.toFixed(4)}°，海拔 ${meta.site.height} m）</text>
 <text x="0" y="36">筛选：星等 ≤ ${meta.magLimit}（仅恒星）；地平线裁切：${meta.horizonClip ? '开启（仅地平以上）' : '关闭（地平以下目标半透明显示）'}。地平坐标由 astronomy-engine Rotation_EQJ_HOR 转换，无大气折射改正。</text>
-<text x="0" y="54">角距均按球面（haversine）计算；图上像素距离不作为实际角距。太阳系天体坐标为含光行差的 J2000 视位置。星表为 J2000 近似值，仅供科普制图。</text>
+<text x="0" y="54">角距均按球面（haversine）计算；图上像素距离不作为实际角距。太阳系天体坐标为含光行差的地心 J2000 视位置。星表为 J2000 近似值，仅供科普制图。</text>
 </g>
 </svg>`;
 }

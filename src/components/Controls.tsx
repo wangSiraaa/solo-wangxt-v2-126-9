@@ -2,8 +2,11 @@
 // 演示场景、视场与批注的 IndexedDB 存取。
 
 import { useState } from 'react';
+import { Body } from 'astronomy-engine';
 import { OBSERVING_SITES } from '../data/sites';
 import { DEMO_SCENARIOS } from '../data/scenarios';
+import { TRACKABLE_BODIES } from '../lib/astronomy';
+import { TRAJECTORY_STEP_HOURS, type TrajectoryRequest } from '../lib/trajectory';
 import type { FovConfig, SavedFov, Annotation, SiteState } from '../types';
 
 interface ControlsProps {
@@ -29,6 +32,12 @@ interface ControlsProps {
   onDeleteFov: (uuid: string) => void;
   onAddAnnotation: (text: string, color: string) => void;
   onDeleteAnnotation: (uuid: string) => void;
+  trajectoryDraft: TrajectoryRequest;
+  trajectoryError: string | null;
+  hasTrajectory: boolean;
+  onChangeTrajectoryDraft: (draft: TrajectoryRequest) => void;
+  onGenerateTrajectory: () => void;
+  onClearTrajectory: () => void;
 }
 
 export default function Controls(p: ControlsProps) {
@@ -39,6 +48,11 @@ export default function Controls(p: ControlsProps) {
   const setRa = (v: number) => p.onChangeFov({ ...p.fov, centerRa: ((v % 360) + 360) % 360 });
   const setDec = (v: number) => p.onChangeFov({ ...p.fov, centerDec: Math.max(-90, Math.min(90, v)) });
   const setRadius = (v: number) => p.onChangeFov({ ...p.fov, radiusDeg: Math.max(1, Math.min(90, v)) });
+  const tr = p.trajectoryDraft;
+  const setTr = (patch: Partial<TrajectoryRequest>) => p.onChangeTrajectoryDraft({ ...tr, ...patch });
+
+  const toLocalInput = (iso: string) => iso.slice(0, 16);
+  const toUtcIso = (value: string) => (value ? `${value}:00Z` : '');
 
   return (
     <div className="controls">
@@ -91,6 +105,58 @@ export default function Controls(p: ControlsProps) {
           <input type="datetime-local" step={1} value={p.timeUtcIso.slice(0, 19)} onChange={(e) => p.onChangeTime(e.target.value + 'Z')} />
         </label>
         <p className="hint">北京时间 = UTC + 8 小时。默认 2026-09-30 13:00 UTC（北京 21:00，大角星近地平）。</p>
+      </section>
+
+      <section className="ctl-block trajectory-block">
+        <h3>单目标日期轨迹（离散采样）</h3>
+        <label>
+          目标
+          <select value={tr.body} onChange={(e) => {
+            const found = TRACKABLE_BODIES.find((item) => item.body === (e.target.value as Body));
+            if (found) setTr({ body: found.body, targetName: found.name });
+          }}>
+            {TRACKABLE_BODIES.map((item) => (
+              <option key={item.body} value={item.body}>{item.name}</option>
+            ))}
+          </select>
+        </label>
+        <div className="num-row two-col">
+          <label>
+            开始 UTC
+            <input
+              type="datetime-local"
+              value={toLocalInput(tr.startUtcIso)}
+              onChange={(e) => setTr({ startUtcIso: toUtcIso(e.target.value) })}
+            />
+          </label>
+          <label>
+            结束 UTC
+            <input
+              type="datetime-local"
+              value={toLocalInput(tr.endUtcIso)}
+              onChange={(e) => setTr({ endUtcIso: toUtcIso(e.target.value) })}
+            />
+          </label>
+        </div>
+        <label>
+          固定 UTC 步长
+          <select
+            value={tr.stepHours}
+            onChange={(e) => setTr({ stepHours: Number(e.target.value) as TrajectoryRequest['stepHours'] })}
+          >
+            {TRAJECTORY_STEP_HOURS.map((h) => (
+              <option key={h} value={h}>{h} 小时</option>
+            ))}
+          </select>
+        </label>
+        <div className="btn-row">
+          <button className="btn" onClick={p.onGenerateTrajectory}>生成轨迹</button>
+          {p.hasTrajectory && <button className="btn btn-ghost" onClick={p.onClearTrajectory}>清除</button>}
+        </div>
+        {p.trajectoryError && <p className="form-error">{p.trajectoryError}</p>}
+        <p className="hint">
+          最多 31 天、121 个采样点；结束时间须为步长整数倍。短线只连接相邻离散采样点，不把线段间路径或可见性当作精密星历。
+        </p>
       </section>
 
       <section className="ctl-block">
